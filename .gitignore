@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+
+# Logs
+*.log
+
+# Flutter / Dart
+.dart_tool/
+build/
+.pub-cache/
+.flutter-plugins-dependencies
+
+# IDE
+.idea/
+*.iml
