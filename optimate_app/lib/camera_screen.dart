@@ -1,4 +1,3 @@
-
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -20,12 +19,14 @@ class _CameraScreenState extends State<CameraScreen> {
   CameraController? controller;
 
   bool busy = false;
-  bool _isCapturing = false; // ✅ FIX: capture lock
+  bool _isCapturing = false;
 
   int selectedCamera = 0;
   Key previewKey = UniqueKey();
 
   static const String backendUrl = "https://api.optifocus.in";
+
+  bool captureWithFrame = true;
 
   bool get canFlip => widget.cameras.length > 1;
 
@@ -73,12 +74,9 @@ class _CameraScreenState extends State<CameraScreen> {
     if (busy || !canFlip) return;
     setState(() => busy = true);
 
-    final currentLens =
-        widget.cameras[selectedCamera].lensDirection;
-
-    final newIndex = widget.cameras.indexWhere(
-      (c) => c.lensDirection != currentLens,
-    );
+    final currentLens = widget.cameras[selectedCamera].lensDirection;
+    final newIndex =
+        widget.cameras.indexWhere((c) => c.lensDirection != currentLens);
 
     if (newIndex != -1) {
       selectedCamera = newIndex;
@@ -123,6 +121,7 @@ class _CameraScreenState extends State<CameraScreen> {
             "lens": isFrontCamera ? "front" : "back",
             "mirrored": isFrontCamera,
             "rotation_deg": 0,
+            "capture_with_frame": captureWithFrame,
           }
         }),
       );
@@ -132,31 +131,7 @@ class _CameraScreenState extends State<CameraScreen> {
       }
 
       final data = jsonDecode(res.body);
-
-      final pdExists = data["pd"]?["total_mm"] != null;
-      final occ = data["occlusion"] ?? {};
-      final pose = data["pose"] ?? {};
-
-      if (!pdExists) {
-        _showMessage("Face not detected properly. Retake.");
-        return;
-      }
-
-      if (occ["left_hand_blocking"] == true &&
-          occ["right_hand_blocking"] == true) {
-        _showMessage("Remove your hands from your face.");
-        return;
-      }
-
-      if (occ["sunglasses_detected"] == true) {
-        _showMessage("Remove sunglasses or dark frames.");
-        return;
-      }
-
-      if ((pose["head_tilt_deg"] ?? 0).abs() > 6.0) {
-        _showMessage("Keep your head straight.");
-        return;
-      }
+      data["capture_with_frame"] = captureWithFrame;
 
       if (!mounted) return;
 
@@ -170,7 +145,6 @@ class _CameraScreenState extends State<CameraScreen> {
         ),
       );
     } catch (e) {
-      debugPrint("CAPTURE FAILED: $e");
       _showMessage("Capture failed. Hold still and try again.");
     } finally {
       _isCapturing = false;
@@ -186,7 +160,6 @@ class _CameraScreenState extends State<CameraScreen> {
     final mmToPx = (160 / 25.4) / dpr;
     final fourMmPx = 4 * mmToPx;
 
-    const ovalWidth = 280.0;
     const ovalHeight = 300.0;
     final ovalCenterY = size.height * 0.42;
     final ovalTopY = ovalCenterY - ovalHeight / 2;
@@ -211,6 +184,7 @@ class _CameraScreenState extends State<CameraScreen> {
               child: CircularProgressIndicator(color: Colors.white),
             ),
 
+          // ✅ ALWAYS SHOW OVAL OVERLAY
           IgnorePointer(
             child: CustomPaint(
               size: size,
@@ -218,7 +192,6 @@ class _CameraScreenState extends State<CameraScreen> {
             ),
           ),
 
-          // ✅ TEXT MOVED HERE (CENTERED ABOVE OVAL)
           Positioned(
             top: ovalTopY - 40,
             left: 0,
@@ -235,6 +208,7 @@ class _CameraScreenState extends State<CameraScreen> {
             ),
           ),
 
+          // 🔴 RED DOT ONLY WHEN FRAME MODE
           if (isFrontCamera)
             Positioned(
               left: (size.width / 2) - 12,
@@ -261,6 +235,35 @@ class _CameraScreenState extends State<CameraScreen> {
                     onPressed: busy ? null : flipCamera,
                   )
                 : const SizedBox.shrink(),
+          ),
+
+          Positioned(
+            bottom: 130,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: ToggleButtons(
+                isSelected: [captureWithFrame, !captureWithFrame],
+                onPressed: busy
+                    ? null
+                    : (index) =>
+                        setState(() => captureWithFrame = index == 0),
+                borderRadius: BorderRadius.circular(20),
+                color: Colors.white70,
+                selectedColor: Colors.black,
+                fillColor: Colors.yellow,
+                children: const [
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16),
+                    child: Text("With Frame"),
+                  ),
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16),
+                    child: Text("Without Frame"),
+                  ),
+                ],
+              ),
+            ),
           ),
 
           Positioned(
