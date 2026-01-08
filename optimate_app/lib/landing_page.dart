@@ -46,7 +46,7 @@ Widget build(BuildContext context) {
                 child: Padding(
                   padding: EdgeInsets.only(bottom: 10.0),
                   child: Text(
-                    '© copyright 2025 Optifocus Pvt. Ltd.',
+                    '© copyright 2026 Optifocus Pvt. Ltd.',
                     style: TextStyle(fontSize: 16, color: Color.fromARGB(255, 15, 15, 15)),
                   ),
                 ),
@@ -102,7 +102,7 @@ fontWeight: FontWeight.w700),
 ),
           const SizedBox(height: 12),
           const Text(
-            '© copyright 2025 Optifocus Pvt. Ltd.',
+            '© copyright 2026 Optifocus Pvt. Ltd.',
             style: TextStyle(fontSize: 14, color: Color.fromARGB(255, 15, 15, 15)),
           ),
 ],
