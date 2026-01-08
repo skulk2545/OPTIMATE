@@ -1,10 +1,10 @@
 import 'dart:typed_data';
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 
 import 'final_result_screen.dart';
+
+enum AdjustMode { none, pd, frame }
 
 class ResultScreen extends StatefulWidget {
   final Uint8List capturedImage;
@@ -21,338 +21,477 @@ class ResultScreen extends StatefulWidget {
 }
 
 class _ResultScreenState extends State<ResultScreen> {
-  // ================= STATIC FRAME VALUES =================
-  static const double baseA = 45.0;
-  static const double baseB = 28.0;
-  static const double baseDBL = 16.0;
-  static const double pxPerMm = 1.3;
+  // ================= UI =================
+  AdjustMode mode = AdjustMode.none;
+  final TransformationController zoomCtrl = TransformationController();
 
-  // ================= FRAME BOXES =================
-  Rect leftBox = Rect.zero;
-  Rect rightBox = Rect.zero;
+  // ================= IMAGE =================
+  late double imgW, imgH, mmPerPx;
 
-  // ================= BACKEND DATA =================
-  late final Offset leftEyeImg;
-  late final Offset rightEyeImg;
-  late final Size imageSize;
+  // ================= PD =================
+  late double basePdLeft, basePdRight, basePdTotal;
+  late Offset baseLeftPx, baseRightPx;
+  late Offset leftPx, rightPx;
+  double pdLeft = 0, pdRight = 0, pdTotal = 0;
 
-  late final double pdLeft;
-  late final double pdRight;
-  late final double pdTotal;
-
-  Size? displaySize;
-
-  // ================= VIEWER =================
-  final TransformationController _viewerCtrl =
-      TransformationController();
-
-  // ================= CAPTURE =================
-  final GlobalKey _captureKey = GlobalKey();
+  // ================= FRAME =================
+  late double baseA, baseB, baseDBL;
+  Rect? leftFramePx, rightFramePx;
+  double A = 0, B = 0, DBL = 0;
 
   @override
   void initState() {
     super.initState();
 
-    final l = widget.resultData["left_eye_center_px"];
-    final r = widget.resultData["right_eye_center_px"];
-
-    leftEyeImg = Offset(l[0].toDouble(), l[1].toDouble());
-    rightEyeImg = Offset(r[0].toDouble(), r[1].toDouble());
-
-    imageSize = Size(
-      widget.resultData["image_width"].toDouble(),
-      widget.resultData["image_height"].toDouble(),
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.black,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
+      ),
     );
 
-    pdLeft = (widget.resultData["pd_left_mm"] ?? 0).toDouble();
-    pdRight = (widget.resultData["pd_right_mm"] ?? 0).toDouble();
-    pdTotal = (widget.resultData["pd_total_mm"] ?? 0).toDouble();
-  }
+    final pd = widget.resultData["pd"];
+    final eyes = widget.resultData["eyes"];
+    final frame = widget.resultData["frame"];
+    final img = widget.resultData["image"];
 
-  // ================= IMAGE → SCREEN =================
-  Offset mapImageToScreen(Offset p, Size display) {
-    final scale = (display.width / imageSize.width)
-        .clamp(0, display.height / imageSize.height);
+    imgW = (img["width"] as num).toDouble();
+    imgH = (img["height"] as num).toDouble();
+    mmPerPx = (pd["scale_mm_per_px"] as num).toDouble();
 
-    final dx = (display.width - imageSize.width * scale) / 2;
-    final dy = (display.height - imageSize.height * scale) / 2;
+    basePdLeft = (pd["left_mm"] as num).toDouble();
+    basePdRight = (pd["right_mm"] as num).toDouble();
+    basePdTotal = (pd["total_mm"] as num).toDouble();
 
-    return Offset(p.dx * scale + dx, p.dy * scale + dy);
-  }
-
-  // ================= INIT BOXES =================
-  void initBoxes(Size display) {
-    if (leftBox != Rect.zero) return;
-
-    final leftEye = mapImageToScreen(leftEyeImg, display);
-
-    const w = baseA * pxPerMm;
-    const h = baseB * pxPerMm;
-    const dbl = baseDBL * pxPerMm;
-
-    leftBox = Rect.fromCenter(center: leftEye, width: w, height: h);
-    rightBox = Rect.fromCenter(
-      center: Offset(leftEye.dx + w + dbl, leftEye.dy),
-      width: w,
-      height: h,
+    baseLeftPx = Offset(
+      (eyes["left_center_px"][0] as num).toDouble(),
+      (eyes["left_center_px"][1] as num).toDouble(),
     );
-  }
+    baseRightPx = Offset(
+      (eyes["right_center_px"][0] as num).toDouble(),
+      (eyes["right_center_px"][1] as num).toDouble(),
+    );
 
-  // ================= MOVE =================
-  void moveBox(bool left, Offset delta) {
-    final scale = _viewerCtrl.value.getMaxScaleOnAxis();
-    setState(() {
-      left
-          ? leftBox = leftBox.shift(delta / scale)
-          : rightBox = rightBox.shift(delta / scale);
-    });
-  }
+    leftPx = baseLeftPx;
+    rightPx = baseRightPx;
 
-  // ================= RESIZE =================
-  void resizeBox(bool left, Alignment corner, Offset delta) {
-    final scale = _viewerCtrl.value.getMaxScaleOnAxis();
-    final d = delta / scale;
+    pdLeft = basePdLeft;
+    pdRight = basePdRight;
+    pdTotal = basePdTotal;
 
-    setState(() {
-      Rect box = left ? leftBox : rightBox;
+    baseA = (frame?["A_mm"] as num?)?.toDouble() ?? 0;
+    baseB = (frame?["B_mm"] as num?)?.toDouble() ?? 0;
+    baseDBL = (frame?["DBL_mm"] as num?)?.toDouble() ?? 0;
 
-      double l = box.left;
-      double t = box.top;
-      double r = box.right;
-      double b = box.bottom;
+    A = baseA;
+    B = baseB;
+    DBL = baseDBL;
 
-      if (corner.x < 0) l += d.dx;
-      if (corner.x > 0) r += d.dx;
-      if (corner.y < 0) t += d.dy;
-      if (corner.y > 0) b += d.dy;
+    if (baseA > 0 && baseB > 0) {
+      final wPx = baseA / mmPerPx;
+      final hPx = baseB / mmPerPx;
 
-      final newBox = Rect.fromLTRB(
-        l,
-        t,
-        (r - l).clamp(40, 300) + l,
-        (b - t).clamp(30, 240) + t,
+      // 🔼 ONLY CHANGE: shift frame boxes upward
+      final verticalShift = imgH * 0.10;
+
+      leftFramePx = Rect.fromCenter(
+        center: Offset(
+          imgW * 0.35,
+          imgH * 0.5 - verticalShift,
+        ),
+        width: wPx,
+        height: hPx,
       );
 
-      left ? leftBox = newBox : rightBox = newBox;
-    });
+      rightFramePx = Rect.fromCenter(
+        center: Offset(
+          imgW * 0.65,
+          imgH * 0.5 - verticalShift,
+        ),
+        width: wPx,
+        height: hPx,
+      );
+    }
   }
 
-  // ================= CAPTURE =================
-  Future<Uint8List> _captureAnnotatedImage() async {
-    final boundary =
-        _captureKey.currentContext!.findRenderObject()
-            as RenderRepaintBoundary;
+  void _recomputePD() {
+    final leftDxPx = leftPx.dx - baseLeftPx.dx;
+    final rightDxPx = rightPx.dx - baseRightPx.dx;
 
-    final ui.Image image =
-        await boundary.toImage(pixelRatio: 3.0);
+    final leftDeltaMm = leftDxPx.abs() * mmPerPx;
+    final rightDeltaMm = rightDxPx.abs() * mmPerPx;
 
-    final byteData =
-        await image.toByteData(format: ui.ImageByteFormat.png);
+    pdLeft = leftDxPx >= 0
+        ? basePdLeft - leftDeltaMm
+        : basePdLeft + leftDeltaMm;
 
-    return byteData!.buffer.asUint8List();
+    pdRight = rightDxPx >= 0
+        ? basePdRight + rightDeltaMm
+        : basePdRight - rightDeltaMm;
+
+    pdTotal = pdLeft + pdRight;
   }
 
-  // ================= UI =================
+  void _recomputeFrame() {
+    if (leftFramePx == null || rightFramePx == null) return;
+
+    A = leftFramePx!.width * mmPerPx;
+    B = leftFramePx!.height * mmPerPx;
+
+    final gapPx = rightFramePx!.left - leftFramePx!.right;
+    DBL = gapPx * mmPerPx;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF121212),
-        title: const Text("Frame Adjustment"),
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: LayoutBuilder(
-              builder: (_, c) {
-                final display = Size(c.maxWidth, c.maxHeight);
-                displaySize ??= display;
+  backgroundColor: Colors.black,
+  iconTheme: const IconThemeData(
+    color: Colors.white, // 👈 makes back button visible
+  ),
+  title: const Text(
+    "Measurement Result",
+    style: TextStyle(color: Colors.white),
+  ),
+),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: _modeButton(
+                    "Adjust PD",
+                    mode == AdjustMode.pd,
+                    () => setState(() => mode = AdjustMode.pd),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _modeButton(
+                    "Adjust Frame",
+                    mode == AdjustMode.frame,
+                    () => setState(() => mode = AdjustMode.frame),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: AspectRatio(
+                aspectRatio: imgW / imgH,
+                child: LayoutBuilder(
+                  builder: (context, c) {
+                    final scale = c.maxWidth / imgW;
+                    final dx = (c.maxWidth - imgW * scale) / 2;
+                    final dy = (c.maxHeight - imgH * scale) / 2;
 
-                initBoxes(display);
+                    Offset toUi(Offset p) =>
+                        Offset(dx + p.dx * scale, dy + p.dy * scale);
+                    Offset toImg(Offset p) =>
+                        Offset((p.dx - dx) / scale, (p.dy - dy) / scale);
 
-                final le = mapImageToScreen(leftEyeImg, display);
-                final re = mapImageToScreen(rightEyeImg, display);
+                    Rect toUiRect(Rect r) => Rect.fromLTWH(
+                          dx + r.left * scale,
+                          dy + r.top * scale,
+                          r.width * scale,
+                          r.height * scale,
+                        );
+                    Rect toImgRect(Rect r) => Rect.fromLTWH(
+                          (r.left - dx) / scale,
+                          (r.top - dy) / scale,
+                          r.width / scale,
+                          r.height / scale,
+                        );
 
-                return RepaintBoundary(
-                  key: _captureKey,
-                  child: InteractiveViewer(
-                    transformationController: _viewerCtrl,
-                    minScale: 1.0,
-                    maxScale: 4.0,
-                    panEnabled: false,
-                    scaleEnabled: true,
-                    child: SizedBox(
-                      width: display.width,
-                      height: display.height,
+                    return InteractiveViewer(
+                      transformationController: zoomCtrl,
+                      minScale: 1,
+                      maxScale: 5,
                       child: Stack(
                         children: [
-                          Positioned.fill(
-                            child: Image.memory(
-                              widget.capturedImage,
-                              fit: BoxFit.contain,
-                            ),
+                          Image.memory(widget.capturedImage),
+
+                          _pdMarker(
+                            toUi(leftPx),
+                            mode == AdjustMode.pd,
+                            (p) => setState(() {
+                              leftPx = toImg(p);
+                              _recomputePD();
+                            }),
                           ),
-                          _pdMarker(le),
-                          _pdMarker(re),
-                          _box(true),
-                          _box(false),
+                          _pdMarker(
+                            toUi(rightPx),
+                            mode == AdjustMode.pd,
+                            (p) => setState(() {
+                              rightPx = toImg(p);
+                              _recomputePD();
+                            }),
+                          ),
+
+                          if (leftFramePx != null)
+                            _frameBox(
+                              toUiRect(leftFramePx!),
+                              mode == AdjustMode.frame,
+                              (r) => setState(() {
+                                leftFramePx = toImgRect(r);
+                                _recomputeFrame();
+                              }),
+                            ),
+                          if (rightFramePx != null)
+                            _frameBox(
+                              toUiRect(rightFramePx!),
+                              mode == AdjustMode.frame,
+                              (r) => setState(() {
+                                rightFramePx = toImgRect(r);
+                                _recomputeFrame();
+                              }),
+                            ),
                         ],
                       ),
-                    ),
-                  ),
-                );
-              },
+                    );
+                  },
+                ),
+              ),
             ),
-          ),
-
-          // 🔥 PD DISPLAY — RIGHT FIRST, THEN LEFT
-          _row([
-            _card("PD R", pdRight),
-            _card("PD L", pdLeft),
-            _card("PD", pdTotal),
-          ]),
-
-          _row([
-            _card("A", leftBox.width / pxPerMm),
-            _card("B", leftBox.height / pxPerMm),
-            _card(
-              "DBL",
-              (rightBox.left - leftBox.right)
-                      .clamp(0, 500) /
-                  pxPerMm,
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                _card("PD R", pdRight),
+                _card("PD L", pdLeft),
+                _card("PD T", pdTotal),
+              ],
             ),
-          ]),
-
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: SizedBox(
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                _card("A", A),
+                _card("B", B),
+                _card("DBL", DBL),
+              ],
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                child:
-                    const Text("Confirm & View Final Result"),
-                onPressed: () async {
-                  final annotated =
-                      await _captureAnnotatedImage();
-
+                onPressed: () {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (_) => FinalResultScreen(
-                        image: annotated,
-                        pxPerMm: pxPerMm,
-                        A: leftBox.width / pxPerMm,
-                        B: leftBox.height / pxPerMm,
-                        DBL: (rightBox.left -
-                                leftBox.right) /
-                            pxPerMm,
+                        image: widget.capturedImage,
+                        pxPerMm: mmPerPx,
+                        A: A,
+                        B: B,
+                        DBL: DBL,
                         pdLeft: pdLeft,
                         pdRight: pdRight,
                         pdTotal: pdTotal,
+                        leftEyePx: leftPx,
+                        rightEyePx: rightPx,
+                        leftFramePx: leftFramePx,
+                        rightFramePx: rightFramePx,
+                        imageWidth: imgW,
+                        imageHeight: imgH,
                       ),
                     ),
                   );
                 },
+                child: const Text("Continue"),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget _row(List<Widget> children) => Padding(
-        padding: const EdgeInsets.symmetric(
-            horizontal: 16, vertical: 6),
-        child: Row(
-          children: children
-              .expand((w) => [
-                    Expanded(child: w),
-                    const SizedBox(width: 8),
-                  ])
-              .toList()
-            ..removeLast(),
+  // ================= UI HELPERS =================
+  Widget _pdMarker(
+    Offset p,
+    bool active,
+    ValueChanged<Offset> onMove,
+  ) =>
+      Positioned(
+        left: p.dx - 6,
+        top: p.dy - 6,
+        child: IgnorePointer(
+          ignoring: !active,
+          child: GestureDetector(
+            onPanUpdate: active
+                ? (d) =>
+                    onMove(Offset(p.dx + d.delta.dx, p.dy + d.delta.dy))
+                : null,
+            child: Icon(
+              Icons.add,
+              size: 14,
+              color: active
+                  ? const Color(0xFF1AFF00)
+                  : const Color(0xFF1AFF00).withOpacity(0.6),
+            ),
+          ),
         ),
       );
+  
+  Widget _frameBox(
+  Rect r,
+  bool active,
+  ValueChanged<Rect> onUpdate,
+) {
+  const handleSize = 6.0;
 
-  Widget _box(bool left) {
-    final box = left ? leftBox : rightBox;
-
-    return Positioned(
-      left: box.left,
-      top: box.top,
-      width: box.width,
-      height: box.height,
-      child: Stack(
-        children: [
-          GestureDetector(
-            onPanUpdate: (d) => moveBox(left, d.delta),
-            child: Container(
-              decoration: BoxDecoration(
-                border: Border.all(
-                  color: const ui.Color.fromARGB(
-                      255, 84, 254, 62),
-                  width: 1.2,
+  return Positioned(
+    left: r.left,
+    top: r.top,
+    child: IgnorePointer(
+      ignoring: !active,
+      child: Opacity(
+        opacity: active ? 1.0 : 0.6,
+        child: Stack(
+          children: [
+            // ================= DRAG AREA =================
+            GestureDetector(
+              onPanUpdate: (d) {
+                onUpdate(r.shift(d.delta)); // ✅ drag only
+              },
+              child: Container(
+                width: r.width,
+                height: r.height,
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: const Color(0xFF1AFF00),
+                    width: 1,
+                  ),
                 ),
               ),
             ),
-          ),
-          _corner(left, Alignment.topLeft),
-          _corner(left, Alignment.topRight),
-          _corner(left, Alignment.bottomLeft),
-          _corner(left, Alignment.bottomRight),
-        ],
+
+            // ================= TOP-LEFT HANDLE =================
+            Positioned(
+              left: -handleSize / 2,
+              top: -handleSize / 2,
+              child: _resizeHandle(
+                handleSize,
+                (d) {
+                  onUpdate(Rect.fromLTRB(
+                    r.left + d.delta.dx,
+                    r.top + d.delta.dy,
+                    r.right,
+                    r.bottom,
+                  ));
+                },
+              ),
+            ),
+
+            // ================= TOP-RIGHT HANDLE =================
+            Positioned(
+              right: -handleSize / 2,
+              top: -handleSize / 2,
+              child: _resizeHandle(
+                handleSize,
+                (d) {
+                  onUpdate(Rect.fromLTRB(
+                    r.left,
+                    r.top + d.delta.dy,
+                    r.right + d.delta.dx,
+                    r.bottom,
+                  ));
+                },
+              ),
+            ),
+
+            // ================= BOTTOM-LEFT HANDLE =================
+            Positioned(
+              left: -handleSize / 2,
+              bottom: -handleSize / 2,
+              child: _resizeHandle(
+                handleSize,
+                (d) {
+                  onUpdate(Rect.fromLTRB(
+                    r.left + d.delta.dx,
+                    r.top,
+                    r.right,
+                    r.bottom + d.delta.dy,
+                  ));
+                },
+              ),
+            ),
+
+            // ================= BOTTOM-RIGHT HANDLE =================
+            Positioned(
+              right: -handleSize / 2,
+              bottom: -handleSize / 2,
+              child: _resizeHandle(
+                handleSize,
+                (d) {
+                  onUpdate(Rect.fromLTRB(
+                    r.left,
+                    r.top,
+                    r.right + d.delta.dx,
+                    r.bottom + d.delta.dy,
+                  ));
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+Widget _resizeHandle(
+  double size,
+  GestureDragUpdateCallback onDrag,
+) =>
+    GestureDetector(
+      onPanUpdate: onDrag,
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: const Color(0xFF1AFF00),
+          shape: BoxShape.circle,
+        ),
       ),
     );
-  }
 
-  Widget _corner(bool left, Alignment a) => Align(
-        alignment: a,
-        child: GestureDetector(
-          onPanUpdate: (d) =>
-              resizeBox(left, a, d.delta),
-          child: Container(
-            width: 4,
-            height: 4,
-            color: const ui.Color.fromARGB(
-                255, 53, 241, 63),
-          ),
+
+
+
+  Widget _modeButton(String t, bool a, VoidCallback onTap) =>
+      ElevatedButton(
+        onPressed: onTap,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: a ? Colors.greenAccent : Colors.grey.shade800,
+          foregroundColor: Colors.black,
         ),
+        child: Text(t),
       );
 
-  Widget _pdMarker(Offset p) => Positioned(
-        left: p.dx - 8,
-        top: p.dy - 8,
-        child: const IgnorePointer(
-          child: Icon(
-            Icons.add,
-            size: 16,
-            color: ui.Color.fromARGB(
-                255, 48, 240, 57),
-          ),
-        ),
-      );
-
-  Widget _card(String t, double v) => Card(
-        color: const Color(0xFF1E1E1E),
-        child: Padding(
-          padding:
-              const EdgeInsets.symmetric(vertical: 14),
-          child: Column(
-            children: [
-              Text(t,
+  Widget _card(String l, double v) => Expanded(
+        child: Card(
+          color: const Color(0xFF1E1E1E),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            child: Column(
+              children: [
+                Text(l, style: const TextStyle(color: Colors.white70)),
+                const SizedBox(height: 6),
+                Text(
+                  v.toStringAsFixed(1),
                   style: const TextStyle(
-                      color: Colors.white70)),
-              const SizedBox(height: 6),
-              Text(
-                "${v.toStringAsFixed(1)} mm",
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       );
