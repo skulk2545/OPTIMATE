@@ -25,7 +25,7 @@ class _CameraScreenState extends State<CameraScreen> {
   int selectedCamera = 0;
   Key previewKey = UniqueKey();
 
-  static const String backendUrl = "http://15.207.247.69";
+  static const String backendUrl = "https://api.optifocus.in";
 
   bool get canFlip => widget.cameras.length > 1;
 
