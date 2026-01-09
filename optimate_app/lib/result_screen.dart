@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -326,55 +325,108 @@ class _ResultScreenState extends State<ResultScreen> {
       );
 
   Widget _frameBox(Rect r, bool active, ValueChanged<Rect> onUpdate) {
-    const handle = 6.0;
-    return Positioned(
-      left: r.left,
-      top: r.top,
-      child: IgnorePointer(
-        ignoring: !active,
-        child: Opacity(
-          opacity: active ? 1 : 0.6,
-          child: Stack(children: [
+  const handle = 8.0;
+
+  Rect resize(Rect rect, Offset delta, bool left, bool top) {
+    double newLeft = rect.left;
+    double newTop = rect.top;
+    double newRight = rect.right;
+    double newBottom = rect.bottom;
+
+    if (left) newLeft += delta.dx;
+    else newRight += delta.dx;
+
+    if (top) newTop += delta.dy;
+    else newBottom += delta.dy;
+
+    // Prevent inverted / zero-size rectangles
+    if (newRight - newLeft < 20 || newBottom - newTop < 20) {
+      return rect;
+    }
+
+    return Rect.fromLTRB(newLeft, newTop, newRight, newBottom);
+  }
+
+  return Positioned(
+    left: r.left,
+    top: r.top,
+    child: IgnorePointer(
+      ignoring: !active,
+      child: Opacity(
+        opacity: active ? 1 : 0.6,
+        child: Stack(
+          children: [
+            // MOVE WHOLE FRAME
             GestureDetector(
               onPanUpdate: (d) => onUpdate(r.shift(d.delta)),
               child: Container(
                 width: r.width,
                 height: r.height,
                 decoration: BoxDecoration(
-                  border:
-                      Border.all(color: const Color(0xFF1AFF00)),
+                  border: Border.all(color: const Color(0xFF1AFF00)),
                 ),
               ),
             ),
-            for (final dx in [-3.0, r.width - 3])
-              for (final dy in [-3.0, r.height - 3])
-                Positioned(
-                  left: dx,
-                  top: dy,
-                  child: GestureDetector(
-                    onPanUpdate: (d) => onUpdate(
-                      Rect.fromLTRB(
-                        r.left,
-                        r.top,
-                        r.right + d.delta.dx,
-                        r.bottom + d.delta.dy,
-                      ),
-                    ),
-                    child: Container(
-                      width: handle,
-                      height: handle,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF1AFF00),
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  ),
-                ),
-          ]),
+
+            // TOP-LEFT
+            Positioned(
+              left: -handle / 2,
+              top: -handle / 2,
+              child: GestureDetector(
+                onPanUpdate: (d) =>
+                    onUpdate(resize(r, d.delta, true, true)),
+                child: _handleDot(handle),
+              ),
+            ),
+
+            // TOP-RIGHT
+            Positioned(
+              right: -handle / 2,
+              top: -handle / 2,
+              child: GestureDetector(
+                onPanUpdate: (d) =>
+                    onUpdate(resize(r, d.delta, false, true)),
+                child: _handleDot(handle),
+              ),
+            ),
+
+            // BOTTOM-LEFT
+            Positioned(
+              left: -handle / 2,
+              bottom: -handle / 2,
+              child: GestureDetector(
+                onPanUpdate: (d) =>
+                    onUpdate(resize(r, d.delta, true, false)),
+                child: _handleDot(handle),
+              ),
+            ),
+
+            // BOTTOM-RIGHT
+            Positioned(
+              right: -handle / 2,
+              bottom: -handle / 2,
+              child: GestureDetector(
+                onPanUpdate: (d) =>
+                    onUpdate(resize(r, d.delta, false, false)),
+                child: _handleDot(handle),
+              ),
+            ),
+          ],
         ),
       ),
+    ),
+  );
+}
+
+Widget _handleDot(double size) => Container(
+      width: size,
+      height: size,
+      decoration: const BoxDecoration(
+        color: Color(0xFF1AFF00),
+        shape: BoxShape.circle,
+      ),
     );
-  }
+
 
   Widget _modeButton(String t, bool a, VoidCallback onTap) =>
       ElevatedButton(
